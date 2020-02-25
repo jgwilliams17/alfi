@@ -5,3 +5,4 @@ alfi/__pycache__/*
 *.pvd
 *.pvtu
 *.log
+*.msh

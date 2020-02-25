@@ -245,8 +245,10 @@ class NavierStokesSolver(object):
         self.solver = NonlinearVariationalSolver(problem, solver_parameters=params,
                                                  nullspace=nsp, options_prefix="ns_",
                                                  appctx=appctx)
-        self.transfermanager = TransferManager(native_transfers=self.get_transfers())
-        self.solver.set_transfer_manager(self.transfermanager)
+
+        # self.transfers = self.get_transfers()
+        # self.solver.set_transfer_operators(*self.transfers)
+
         self.check_nograddiv_residual = True
         if self.check_nograddiv_residual:
             self.message(GREEN % "Checking residual without grad-div term")
@@ -531,7 +533,7 @@ class NavierStokesSolver(object):
                                             options_prefix="ns_adj",
                                             appctx=self.appctx)
 
-        solver.set_transfer_manager(self.transfermanager)
+        # solver.set_transfer_operators(*self.transfers)
         self.solver_adjoint = solver
 
     def load_balance(self, mesh):
