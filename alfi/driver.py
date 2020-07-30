@@ -104,7 +104,7 @@ def run_solver(solver, res, args):
     comm = solver.mesh.mpi_comm()
     comm.Barrier()
     if args.paraview:
-        pvdf = File(outdir + "velocity.pvd")
+        pvdf = File(outdir + "velocity_pressure.pvd")
     if args.checkpoint:
         os.makedirs(chkptdir, exist_ok=True)
     results = {}
@@ -119,7 +119,7 @@ def run_solver(solver, res, args):
                 with DumbCheckpoint(chkptdir + "nssolution-Re-%s" % (re), mode=FILE_UPDATE) as checkpoint:
                     checkpoint.store(solver.z, name="up_%i" % re)
         if args.paraview:
-            pvdf.write(solver.visprolong(solver.z.split()[0]), time=re)
+            pvdf.write(solver.visprolong(solver.z.split()[0]), solver.visprolong(solver.z.split()[1]), time=re)
 
     if comm.rank == 0:
         for re in results:
