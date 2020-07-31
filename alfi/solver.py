@@ -59,7 +59,8 @@ class NavierStokesSolver(object):
                  patch_composition="additive", restriction=False, smoothing=None,
                  rebalance_vertices=False,
                  hierarchy_callback=None,
-                 high_accuracy=False
+                 high_accuracy=False,
+                 steady=False,
                  ):
 
         assert solver_type in {"almg", "allu", "lu", "simple", "lsc"}, "Invalid solver type %s" % solver_type
@@ -82,6 +83,7 @@ class NavierStokesSolver(object):
         self.restriction = restriction
         self.smoothing = smoothing
         self.high_accuracy = high_accuracy
+        self.steady = steady
 
         def rebalance(dm, i):
             if rebalance_vertices:
@@ -117,6 +119,7 @@ class NavierStokesSolver(object):
         self.mh = mh
         self.area = assemble(Constant(1, domain=mh[0])*dx)
         nu = Constant(1.0)
+        self.dtinv = Constant(0.)
         self.nu = nu
         self.char_L = problem.char_length()
         self.char_U = problem.char_velocity()
@@ -177,6 +180,11 @@ class NavierStokesSolver(object):
         (u, p) = split(z)
         (v, q) = split(TestFunction(Z))
 
+        if not self.steady:
+            z_old = Function(Z)
+            self.z_old = z_old
+            (self.u_old, self.p_old) = split(z_old)
+
         bcs = problem.bcs(Z)
         nsp = problem.nullspace(Z)
         if nsp is not None and solver_type == "lu":
@@ -202,7 +210,10 @@ class NavierStokesSolver(object):
         F = self.residual()
 
         """ Stabilisation """
-        wind = split(self.z_last)[0]
+        if self.steady:
+            wind = split(self.z_last)[0]
+        else:
+            wind = split(self.z_old)[0]
         rhs = problem.rhs(Z)
         if self.stabilisation_type in ["gls", "supg"]:
             if supg_method == "turek":
@@ -236,7 +247,10 @@ class NavierStokesSolver(object):
         if rhs is not None:
             F -= inner(rhs[0], v) * dx + inner(rhs[1], q) * dx
 
-        appctx = {"nu": self.nu, "gamma": self.gamma}
+        if self.steady:
+            appctx = {"nu": self.nu, "gamma": self.gamma}
+        else:
+            appctx = {"nu": self.nu, "gamma": self.gamma, "dtinv": self.dtinv}
         problem = NonlinearVariationalProblem(F, z, bcs=bcs)
         self.bcs = bcs
         self.params = params
@@ -256,8 +270,15 @@ class NavierStokesSolver(object):
             self.F = F
             self.bcs = bcs
 
-    def solve(self, re):
-        self.z_last.assign(self.z)
+    def solve(self, re, dt=0):
+        if self.steady:
+            self.z_last.assign(self.z)
+        else:
+            self.z_old.assign(self.z)
+            if dt > 0:
+                self.dtinv.assign(1./dt)
+            else:
+                self.dtinv.assign(0.)
         self.message(GREEN % ("Solving for Re = %s" % re))
 
         if re == 0:
@@ -385,11 +406,21 @@ class NavierStokesSolver(object):
             "pc_type": "hypre",
         }
 
-        fieldsplit_1 = {
-            "ksp_type": "preonly",
-            "pc_type": "python",
-            "pc_python_type": "alfi.solver.DGMassInv"
-        }
+        if self.steady:
+            fieldsplit_1 = {
+                "ksp_type": "preonly",
+                "pc_type": "python",
+                "pc_python_type": "alfi.solver.DGMassInv"
+            }
+        else:
+            fieldsplit_1 = {
+                "ksp_type": "preonly",
+                "pc_type": "python",
+                "pc_python_type": "alfi.solver.DGMassInv",
+                "Kp_ksp_type": "preonly",
+                "Kp_pc_type": "lu",
+                "Kp_pc_factor_mat_solver_type": "mumps",
+            }
 
         use_mg = self.solver_type == "almg"
 
@@ -564,13 +595,23 @@ class ConstantPressureSolver(NavierStokesSolver):
     def residual(self):
         u, p = split(self.z)
         v, q = TestFunctions(self.Z)
-        F = (
-            self.nu * inner(2*sym(grad(u)), grad(v))*dx
-            + self.gamma * inner(cell_avg(div(u)), div(v))*dx(metadata={"mode": "vanilla"})
-            + self.advect * inner(dot(grad(u), u), v)*dx
-            - p * div(v) * dx
-            - div(u) * q * dx
-        )
+        if self.steady:
+            F = (
+                self.nu * inner(2*sym(grad(u)), grad(v))*dx
+                + self.gamma * inner(cell_avg(div(u)), div(v))*dx(metadata={"mode": "vanilla"})
+                + self.advect * inner(dot(grad(u), u), v)*dx
+                - p * div(v) * dx
+                - div(u) * q * dx
+            )
+        else:
+           F = (
+                self.dtinv * inner(u-self.u_old, v) * dx
+                + self.nu * inner(2*sym(grad(u)), grad(v))*dx
+                + self.gamma * inner(cell_avg(div(u)), div(v))*dx(metadata={"mode": "vanilla"})
+                + self.advect * inner(dot(grad(u), u), v)*dx
+                - p * div(v) * dx
+                - div(u) * q * dx
+            )
         return F
 
     def function_space(self, mesh, k):
@@ -615,13 +656,23 @@ class ScottVogeliusSolver(NavierStokesSolver):
     def residual(self):
         u, p = split(self.z)
         v, q = TestFunctions(self.Z)
-        F = (
-            self.nu * inner(2*sym(grad(u)), grad(v))*dx
-            + self.gamma * inner(div(u), div(v))*dx
-            + self.advect * inner(dot(grad(u), u), v)*dx
-            - p * div(v) * dx
-            - div(u) * q * dx
-        )
+        if self.steady:
+            F = (
+                self.nu * inner(2*sym(grad(u)), grad(v))*dx
+                + self.gamma * inner(div(u), div(v))*dx
+                + self.advect * inner(dot(grad(u), u), v)*dx
+                - p * div(v) * dx
+                - div(u) * q * dx
+            )
+        else:
+            F = (
+                self.dtinv * inner(u-self.u_old, v) * dx
+                + self.nu * inner(2*sym(grad(u)), grad(v))*dx
+                + self.gamma * inner(div(u), div(v))*dx
+                + self.advect * inner(dot(grad(u), u), v)*dx
+                - p * div(v) * dx
+                - div(u) * q * dx
+            )
         return F
 
     def function_space(self, mesh, k):

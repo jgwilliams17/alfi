@@ -45,6 +45,8 @@ def get_default_parser():
     parser.add_argument("--high-accuracy", dest="high_accuracy", default=False,
                         action="store_true")
     parser.add_argument("--smoothing", type=int, default=None)
+    parser.add_argument("--steady", dest="steady", default=False,
+                        action="store_true")
     return parser
 
 
@@ -66,6 +68,7 @@ def get_solver(args, problem, hierarchy_callback=None):
         hierarchy=args.mh,
         patch_composition=args.patch_composition,
         restriction=args.restriction,
+        steady=args.steady,
         smoothing=args.smoothing,
         rebalance_vertices=args.rebalance,
         high_accuracy=args.high_accuracy,
@@ -92,7 +95,7 @@ def performance_info(comm, solver):
             print(BLUE % ("% 5.1fs \t % 4.2fs \t %i" % (time, 1000*time/solver.Z.dim(), solver.Z.dim())))
 
 
-def run_solver(solver, res, args):
+def run_solver(solver, res, args, dt=0):
     if args.time:
         PETSc.Log.begin()
     problemsize = solver.Z.dim()
@@ -113,7 +116,10 @@ def run_solver(solver, res, args):
             with DumbCheckpoint(chkptdir + "nssolution-Re-%s" % (re), mode=FILE_READ) as checkpoint:
                 checkpoint.load(solver.z, name="up_%i" % re)
         except:
-            (z, info_dict) = solver.solve(re)
+            if args.steady:
+                (z, info_dict) = solver.solve(re)
+            else:
+                (z, info_dict) = solver.solve(re, dt=dt)
             results[re] = info_dict
             if args.checkpoint:
                 with DumbCheckpoint(chkptdir + "nssolution-Re-%s" % (re), mode=FILE_UPDATE) as checkpoint:
